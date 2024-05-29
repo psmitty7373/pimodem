@@ -57,6 +57,8 @@
 #include <signal.h>
 #include <limits.h>
 #include <grp.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #define ENOIOCTLCMD 515
 #define BUFFER_PERIODS		12
@@ -89,7 +91,7 @@ extern unsigned int need_realtime;
 extern const char *modem_group;
 extern mode_t modem_perm;
 extern unsigned int use_short_buffer;
-extern const int shared_fd;
+extern int shared_fd;
 
 static char  inbuf[4096];
 static char outbuf[4096];
@@ -119,6 +121,26 @@ static int modemap_start (struct modem *m)
             exit(EXIT_FAILURE);
         }
     }
+
+    /*
+    int sockfd;
+    struct sockaddr_un addr;
+    if ((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+        perror("socket error");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, "/tmp/a", sizeof(addr.sun_path) - 1);
+
+    // Connect to the socket
+    if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        perror("connect error");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    */
 
     dev->fd = shared_fd;
 	dev->delay = 0;

@@ -139,7 +139,7 @@ int setup_stream(snd_pcm_t **handle, char *dev, int stream_type) {
     }
     printf("Asked for period %d, got %d\n", period, exact_period);
 
-    snd_pcm_uframes_t buffer_size = period * 12;
+    snd_pcm_uframes_t buffer_size = period * 120;
     snd_pcm_uframes_t exact_buffer_size = buffer_size;
     if ((err = snd_pcm_hw_params_set_buffer_size_near(*handle, hw_params, &exact_buffer_size)) < 0) {
         error_exit("cannot set sample rate", err);

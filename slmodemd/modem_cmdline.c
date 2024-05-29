@@ -119,7 +119,7 @@ static struct opt {
 	{'s',"shortbuffer","use short buffer (4 periods length)"},
 	{'d',"debug","debug level (developers only, for ./sl...)",OPTIONAL,INTEGER,"0"},
 	{'l',"log","logging mode",OPTIONAL,INTEGER,"5"},
-	{'f',"fd","shared file descriptor number",MANDATORY,INTEGER,"3"},
+	{'f',"fd","shared file descriptor number",MANDATORY,STRING,""},
 	{}
 };
 

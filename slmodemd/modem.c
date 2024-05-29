@@ -2,7 +2,6 @@
 /*
  *
  *    Copyright (c) 2002, Smart Link Ltd.
- *    Copyright (c) 2021, Aon plc
  *    All rights reserved.
  *
  *    Redistribution and use in source and binary forms, with or without
@@ -423,7 +422,7 @@ static void run_modem_stop(struct modem *m)
 
 static void modem_hup(struct modem *m, unsigned local)
 {
-	MODEM_DBG("modem_hup...%d\n",m->state);
+	MODEM_DBG("modem_hup...\n");
 	switch(m->state) {
 	case STATE_MODEM_IDLE:
 		return;
@@ -1945,8 +1944,6 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	return m;
 }
 
-
-
 void modem_delete(struct modem *m)
 {
 	MODEM_DBG("modem_delete...\n");
@@ -1964,7 +1961,6 @@ void modem_delete(struct modem *m)
 	timer_del(&m->event_timer);
 	free(m);
 }
-
 
 
 

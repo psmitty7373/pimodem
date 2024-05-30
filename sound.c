@@ -8,9 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #define BUFFER_SIZE 4096
+#define SAMPLE_FACTOR 10
+#define SAMPLE_RATE 9600
 
 void error_exit(const char *msg, int err) {
     fprintf(stderr, "%s (%s)\n", msg, snd_strerror(err));
@@ -75,7 +78,7 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
         error_exit("could not find mixer element", 0);
     }
 
-    if (((err = snd_mixer_selem_set_playback_volume_all(elem, 20 * max / 100) < 0) < 0) || (err = snd_mixer_selem_set_capture_volume_all(elem, 20 * max / 100)) < 0) {
+    if (((err = snd_mixer_selem_set_playback_volume_all(elem, 1 * max / 100) < 0) < 0) || (err = snd_mixer_selem_set_capture_volume_all(elem, 1 * max / 100)) < 0) {
         snd_mixer_close(*mixer);
         error_exit("could not set volume", err);
     }
@@ -115,18 +118,21 @@ int setup_stream(snd_pcm_t **handle, char *dev, int stream_type) {
         error_exit("cannot set channel count", err);
     }
 
-    unsigned int rate = 9600;
+    unsigned int rate = SAMPLE_RATE;
     unsigned int exact_rate = rate;
     if ((err = snd_pcm_hw_params_set_rate_near(*handle, hw_params, &exact_rate, 0)) < 0) {
         error_exit("cannot set sample rate", err);
     }
-    printf("Asked for rate %d, got %d\n", rate, exact_rate);
+
+    if (rate != exact_rate) {
+        printf("Error! asked for rate %d, got %d\n", rate, exact_rate);
+        exit(EXIT_FAILURE);
+    }
 
     snd_pcm_uframes_t min_period_size;
     int dir;
     if ((err = snd_pcm_hw_params_get_period_size_min(hw_params, &min_period_size, &dir)) < 0) {
         error_exit("error getting minimum period size", err);
-        return 1;
     }
 
     // Print the minimum period size
@@ -139,7 +145,7 @@ int setup_stream(snd_pcm_t **handle, char *dev, int stream_type) {
     }
     printf("Asked for period %d, got %d\n", period, exact_period);
 
-    snd_pcm_uframes_t buffer_size = period * 120;
+    snd_pcm_uframes_t buffer_size = period * 32;
     snd_pcm_uframes_t exact_buffer_size = buffer_size;
     if ((err = snd_pcm_hw_params_set_buffer_size_near(*handle, hw_params, &exact_buffer_size)) < 0) {
         error_exit("cannot set sample rate", err);
@@ -177,140 +183,14 @@ int setup_stream(snd_pcm_t **handle, char *dev, int stream_type) {
         error_exit("cannot set software params", err);
     }
 
-    snd_pcm_sw_params_free(sw_params);
-
-    if (stream_type == SND_PCM_STREAM_PLAYBACK) {
-        if ((err = snd_pcm_format_set_silence(SND_PCM_FORMAT_S16_LE, buf, 384)) < 0) {
-            error_exit("silence error", err);
-        }
-
-        err = snd_pcm_writei(*handle, buf, 384);
-        if (err < 0) {
-            error_exit("pcm write error", err);
-        }
-        printf("Delay: %d\n", err);
-    }
-
     return 0;
-}
-
-typedef struct {
-    snd_pcm_t *capture_handle;
-    snd_pcm_t *playback_handle;
-    int socket_fd;
-} thread_data_t;
-
-void *capture_thread(void *arg) {
-    FILE *fin = fopen("/tmp/in.bin", "wb");
-    if (fin == NULL) {
-        perror("failed to open in.bin");
-        exit(EXIT_FAILURE);
-    }
-
-    thread_data_t *data = (thread_data_t *)arg;
-    char buffer[BUFFER_SIZE];
-    struct pollfd ufds;
-    int err, count;
-
-    struct pollfd out;
-    out.fd = data->socket_fd;
-    out.events = POLLOUT;
-
-    if ((count = snd_pcm_poll_descriptors_count(data->capture_handle)) < 0) {
-        error_exit("cannot get descriptor count", count);
-    }
-
-    if ((err = snd_pcm_poll_descriptors(data->capture_handle, &ufds, count)) < 0) {
-        error_exit("cannot get poll descriptors", err);
-    }
-
-    while (1) {
-        if (poll(&ufds, count, -1) < 0) {
-            perror("poll");
-            exit(EXIT_FAILURE);
-        }
-
-        if (ufds.revents & POLLIN) {
-            int len = snd_pcm_readi(data->capture_handle, buffer, BUFFER_SIZE / 2) * 2;
-
-            if (len > 0) {
-                poll(&out, 1, 0);
-                if (out.revents & POLLOUT) {
-                    int ret = write(data->socket_fd, buffer, len);
-                    if (ret < len) {
-                        printf("check this!\n");
-                    }
-                    //fwrite(buffer, sizeof(char), len, fin);
-                }
-
-            } else if (len == -EPIPE) {
-                printf("EPIPE!#!#\n");
-            } else {
-                printf("WEIRD\n");
-            }
-        }
-        if (ufds.revents & POLLERR) {
-            // Buffer underrun or other error
-            printf("Buffer underrun or error\n");
-        }
-    }
-    fclose(fin);
-    return NULL;
-}
-
-void *playback_thread(void *arg) {
-    FILE *fout = fopen("/tmp/out.bin", "wb");
-    if (fout == NULL) {
-        perror("failed to open out.bin");
-        exit(EXIT_FAILURE);
-    }
-
-    thread_data_t *data = (thread_data_t *)arg;
-    char buffer[BUFFER_SIZE];
-    struct pollfd out;
-    int err;
-    int ret, count, written = 0;
-
-    out.fd = data->socket_fd;
-    out.events = POLLIN;
-
-    while (1) {
-        if (poll(&out, 1, -1) < 0) {
-            perror("poll");
-            exit(EXIT_FAILURE);
-        }
-
-        if (out.revents & POLLIN) {
-            count = read(data->socket_fd, buffer, BUFFER_SIZE) / 2;
-            written = 0;
-
-            while (count > 0) {
-                ret = snd_pcm_writei(data->playback_handle, buffer + written, count);
-                if (ret == -EAGAIN) {
-                    usleep(1);
-                    continue;
-                }
-                else if (ret == -EPIPE) {
-                    //ret = alsa_xrun_recovery(dev);
-                    printf("EPIPE WRTIE\n");
-                }
-                else {
-                    count -= ret;
-                    written += ret * 2;
-                }
-            }
-        }
-    }
-
-    fclose(fout);
-    return NULL;
 }
 
 int main(int argc, char *argv[]) {
     int ret;
 
-    if (argc < 3) {
-        printf("Usage: ./sound <mixer eg. hw:2> <alsa device (eg. plughw:2,0)>\n");
+    if (argc < 4) {
+        printf("Usage: ./sound <mixer eg. hw:2> <alsa playback device (eg. plughw:2,0)> <alsa capture device>\n");
         exit(EXIT_FAILURE);
     }
 
@@ -334,57 +214,178 @@ int main(int argc, char *argv[]) {
             "./slmodemd/slmodemd", "-n", "-d0", "-f", arg,
             (char *)NULL);
         */
-        ret = execl("/usr/bin/qemu-i386-static", "qemu-i386-static", "./slmodemd/slmodemd", "-n", "-d3", "-f", arg, NULL);
+        ret = execl("/usr/bin/qemu-i386-static", "qemu-i386-static", "./slmodemd/slmodemd", "-n", "-d0", "-f", arg, NULL);
         if (ret == -1) {
             perror("execl");
             exit(EXIT_FAILURE);
         }
     } else {
         // parent
-        close(sv[1]);
+        //close(sv[1]);
 
-        int err;
-        pthread_t capture_tid, playback_tid;
-        thread_data_t data;
+    /*
+        struct sched_param param;
+        int max_priority, policy, ret;
+
+        policy = SCHED_FIFO; // or SCHED_RR for round-robin scheduling
+
+        // Get the maximum priority value for the selected policy
+        max_priority = sched_get_priority_max(policy);
+        if (max_priority == -1) {
+            perror("sched_get_priority_max");
+            exit(EXIT_FAILURE);
+        }
+
+        // Set the desired priority value (max_priority for highest priority)
+        param.sched_priority = max_priority;
+
+        // Set the scheduling policy and priority for the current process
+        ret = sched_setscheduler(0, policy, &param);
+        if (ret == -1) {
+            perror("sched_setscheduler");
+            exit(EXIT_FAILURE);
+        }
+
+    */
+        int cap_count, play_count, err;
         snd_mixer_t *mixer_handle;
-        struct sched_param capture_sched_param;
-        struct sched_param playback_sched_param;
+        snd_pcm_t *playback_handle;
+        snd_pcm_t *capture_handle;
 
-        printf("Setting up Mixer\n");
         setup_mixer(&mixer_handle, argv[1]);
-        setup_stream(&data.capture_handle, argv[2], SND_PCM_STREAM_CAPTURE);
-        setup_stream(&data.playback_handle, argv[2], SND_PCM_STREAM_PLAYBACK);
+        setup_stream(&playback_handle, argv[2], SND_PCM_STREAM_PLAYBACK);
+        setup_stream(&capture_handle, argv[3], SND_PCM_STREAM_CAPTURE);
 
-        data.socket_fd = sv[0];
+        if ((cap_count = snd_pcm_poll_descriptors_count(capture_handle)) < 0) {
+            error_exit("cannot get descriptor count", cap_count);
+        }
 
-        if ((err = pthread_create(&capture_tid, NULL, capture_thread, &data)) != 0) {
-            perror("pthread_create for capture");
+        if ((play_count = snd_pcm_poll_descriptors_count(playback_handle)) < 0) {
+            error_exit("cannot get descriptor count", play_count);
+        }
+
+        struct pollfd *fds;
+        struct pollfd out;
+
+        fds = malloc(sizeof(struct pollfd) * (cap_count + play_count + 1));
+        if (fds == NULL) {
+            perror("malloc");
             goto exit;
         }
-//        capture_sched_param.sched_priority = 85;  // sched_get_priority_max(SCHED_FIFO);
-//        if (pthread_setschedparam(capture_tid, SCHED_FIFO, &capture_sched_param) != 0) {
- //           perror("Failed to set real-time scheduling");
-  //          goto exit;
-   //     }
 
-        if ((err = pthread_create(&playback_tid, NULL, playback_thread, &data)) != 0) {
-            perror("pthread_create for playback");
-            goto exit;
+        if ((err = snd_pcm_poll_descriptors(capture_handle, fds, cap_count)) < 0) {
+            error_exit("cannot get poll descriptors", err);
         }
-     //   playback_sched_param.sched_priority = 85;  // sched_get_priority_max(SCHED_FIFO);
-      //  if (pthread_setschedparam(playback_tid, SCHED_FIFO, &playback_sched_param) != 0) {
-     //       perror("Failed to set real-time scheduling");
-    //        goto exit;
-      //  }        
 
-        snd_pcm_start(data.playback_handle);
-        snd_pcm_start(data.capture_handle);
-        pthread_join(capture_tid, NULL);
-        pthread_join(playback_tid, NULL);
+        if ((err = snd_pcm_poll_descriptors(playback_handle, fds + cap_count, play_count)) < 0) {
+            error_exit("cannot get poll descriptors", err);
+        }
+
+        fds[0].events = POLLIN;
+        fds[1].events = 0;
+
+        fds[cap_count + play_count].fd = sv[0];
+        fds[cap_count + play_count].events = POLLIN;
+        out.fd = sv[0];
+        out.events = POLLOUT;
+        int sum;
+
+        snd_pcm_start(playback_handle);
+        snd_pcm_start(capture_handle);
+
+        char inbuf[BUFFER_SIZE];
+        char outbuf[BUFFER_SIZE];
+        size_t outbuf_count = 0;
+        size_t outbuf_written = 0;
+        size_t bytes_pending = 0;
+        unsigned short revents;
+
+        FILE *outf = fopen("/tmp/out.raw", "wb");
+        FILE *inf = fopen("/tmp/in.raw", "wb");
+
+static struct timeval prev_time = {0, 0};
+
+        while (1) {
+            if (poll(fds, cap_count + play_count + 1, -1) < 0) {
+                exit(EXIT_FAILURE);
+            }
+
+            // alsa side
+            if (fds[0].revents & POLLIN) {
+                int inbuf_count = snd_pcm_readi(capture_handle, inbuf, BUFFER_SIZE / 2);
+                if (inbuf_count > 0) {
+                    poll(&out, 1, 0);
+                    if (out.revents & POLLOUT) {
+                        if (ioctl(sv[1], FIONREAD, &bytes_pending) == -1) {
+                            perror("ioctl");
+                            return 1;
+                        }
+                        if (bytes_pending < 96*12) {
+                            int ret = write(sv[0], inbuf, inbuf_count * 2);
+                            if (ret < inbuf_count * 2) {
+                                printf("write failure\n");
+                            }
+                            fwrite(inbuf, sizeof(char), inbuf_count * 2, inf);
+                        } else {
+                        }
+                    } else {
+                        printf("write would block\n");
+                    }
+
+                } else if (inbuf_count == -EPIPE) {
+                    printf("EPIPE!#!#\n");
+                } else {
+                    printf("WEIRD!#!#\n");
+                }
+            }
+            if (fds[0].revents & POLLERR) {
+                // Buffer underrun or other error
+                printf("buffer underrun or error\n");
+            }
+
+            if (outbuf_count > 0 && fds[1].revents & POLLOUT) {
+                while (1) {
+                    ret = snd_pcm_writei(playback_handle, outbuf + outbuf_written, outbuf_count);
+                    if (ret == -EAGAIN) {
+                        printf("EAGAIN\n");
+                        break;
+                    }
+                    else if (ret == -EPIPE) {
+                        //ret = alsa_xrun_recovery(dev);
+                        printf("EPIPE WRITE\n");
+                    }
+                    else if (ret < 0) {
+                        printf("uh-oh!\n");
+                        exit(EXIT_FAILURE);
+                    }
+                    else if (ret > 0) {
+                        fwrite(outbuf + outbuf_written, sizeof(char), ret * 2, outf);
+                        outbuf_count -= ret;
+                        outbuf_written += ret * 2;
+                    }
+                    if (outbuf_count <= 0) {
+                        outbuf_written = 0;
+                        outbuf_count = 0;
+                        fds[1].events = 0;
+                        fds[2].events = POLLIN;
+                        break;
+                    }
+                }
+            } 
+            // socketpair side
+            if (outbuf_count <= 0 && fds[2].revents & POLLIN) {
+                outbuf_count = read(sv[0], outbuf, BUFFER_SIZE) / 2;
+                outbuf_written = 0;
+                fds[1].events = POLLOUT;
+                fds[2].events = 0;
+            }
+        }
 
     exit:
-        snd_pcm_close(data.capture_handle);
-        snd_pcm_close(data.playback_handle);
+        fclose(outf);
+        fclose(inf);
+        snd_pcm_close(capture_handle);
+        snd_pcm_close(playback_handle);
         snd_mixer_close(mixer_handle);
     }
 

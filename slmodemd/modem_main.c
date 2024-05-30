@@ -143,9 +143,10 @@ static int modemap_start (struct modem *m)
     */
 
     dev->fd = shared_fd;
+	
 	dev->delay = 0;
 
-	ret = 192*2;
+	ret = 48*6;
 	memset(outbuf, 0 , ret);
 	ret = write(dev->fd, outbuf, ret);
 	if (ret < 0) {
@@ -153,6 +154,7 @@ static int modemap_start (struct modem *m)
         dev->fd = -1;
         return ret;
 	}
+	
 	dev->delay = ret/2;
 	return 0;
 }
@@ -165,6 +167,7 @@ static int modemap_stop (struct modem *m)
     dev->fd = -1;
     return 0;
 }
+
 
 static int modemap_ioctl(struct modem *m, unsigned int cmd, unsigned long arg)
 {
@@ -220,6 +223,10 @@ static int mdm_device_read(struct device_struct *dev, char *buf, int size)
 
 static int mdm_device_write(struct device_struct *dev, const char *buf, int size)
 {
+	if (size > 576) {
+		printf("big: %d\n", size);
+		return size;
+	}
 	int ret = write(dev->fd, buf, size*2);
 	if (ret > 0) ret /= 2;
 	return ret;
@@ -364,9 +371,9 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 			modem_ring_detector_start(m);
 #endif
 
-                tmo.tv_sec = 1;
-                tmo.tv_usec= 0;
-                FD_ZERO(&rset);
+		tmo.tv_sec = 1;
+		tmo.tv_usec= 0;
+		FD_ZERO(&rset);
 		FD_ZERO(&eset);
 		if(m->started)
 			FD_SET(dev->fd,&rset);
@@ -384,14 +391,15 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 			if(m->pty > max_fd) max_fd = m->pty;
 		}
 
-                ret = select(max_fd + 1,&rset,NULL,&eset,&tmo);
+		ret = select(max_fd + 1,&rset,NULL,&eset,&tmo);
 
-                if (ret < 0) {
+		if (ret < 0) {
 			if (errno == EINTR)
 				continue;
-                        ERR("select: %s\n",strerror(errno));
-                        return ret;
-                }
+
+			ERR("select: %s\n",strerror(errno));
+			return ret;
+		}
 
 		if ( ret == 0 )
 			continue;
@@ -414,8 +422,9 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 			if(stat&MDMSTAT_RING)  modem_ring(m);
 			continue;
 		}
+
 		if(FD_ISSET(dev->fd, &rset)) {
-			count = device_read(dev,inbuf,sizeof(inbuf)/2);
+			count = device_read(dev, inbuf, sizeof(inbuf)/2);
 			if(count < 0) {
 				ERR("dev read: %s\n",strerror(errno));
 				return -1;
@@ -424,6 +433,7 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 				DBG("dev read = 0\n");
 				continue;
 			}
+			
 			in = inbuf;
 			if(m->update_delay < 0) {
 				if ( -m->update_delay >= count) {
@@ -432,8 +442,9 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 					m->update_delay += count;
 					continue;
 				}
+
 				DBG("change delay %d...\n", m->update_delay);
-				in -= m->update_delay;
+				in -= m->update_delay*2;
 				count += m->update_delay;
 				dev->delay += m->update_delay;
 				m->update_delay = 0;
@@ -466,6 +477,7 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 				m->update_delay = 0;
 			}
 		}
+
 		if(FD_ISSET(m->pty,&rset)) {
 			/* check termios */
 			tcgetattr(m->pty,&termios);
@@ -522,7 +534,6 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 
 	return 0;
 }
-
 
 int modem_main(const char *dev_name)
 {
@@ -606,9 +617,6 @@ int modem_main(const char *dev_name)
 	exit(ret);
 	return 0;
 }
-
-
-
 
 int main(int argc, char *argv[])
 {

@@ -1,5 +1,11 @@
 {
     "files.associations": {
-        "asoundlib.h": "c"
+        "asoundlib.h": "c",
+        "algorithm": "c",
+        "array": "c",
+        "string_view": "c",
+        "initializer_list": "c",
+        "msg.h": "c",
+        "ipc.h": "c"
     }
 }

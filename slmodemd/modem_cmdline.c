@@ -54,13 +54,12 @@
 #include <modem_homolog.h>
 #include <modem_debug.h>
 
-#define PR_INFO(fmt...) fprintf(stderr, fmt )
-
+#define PR_INFO(fmt...) fprintf(stderr, fmt)
 
 /* global config data */
 
 /* modem.c */
-extern const char *modem_default_country;
+extern const char* modem_default_country;
 
 /* modem_debug.c */
 extern unsigned int modem_debug_level;
@@ -71,208 +70,227 @@ unsigned int need_realtime = 1;
 #ifdef MODEM_CONFIG_RING_DETECTOR
 unsigned int ring_detector = 0;
 #endif
-const char *modem_group = "dialout";
+const char* modem_group = "dialout";
 unsigned int use_short_buffer = 0;
-mode_t modem_perm  = 0660;
+mode_t modem_perm = 0660;
 int shared_fd = 3;
 
-
-enum {
-	OPT_HELP = 0,
-	OPT_USAGE,
-	OPT_VERSION,
-	OPT_COUNTRY,
-	OPT_COUNTRYLIST,
-	OPT_GROUP,
-	OPT_PERM,
+enum
+{
+    OPT_HELP = 0,
+    OPT_USAGE,
+    OPT_VERSION,
+    OPT_COUNTRY,
+    OPT_COUNTRYLIST,
+    OPT_GROUP,
+    OPT_PERM,
 #ifdef MODEM_CONFIG_RING_DETECTOR
-	OPT_RINGDET,
+    OPT_RINGDET,
 #endif
-	OPT_USER,
-	OPT_SHORTBUF,
-	OPT_DEBUG,
-	OPT_LOG,
-	OPT_FD,
-	OPT_LAST
+    OPT_USER,
+    OPT_SHORTBUF,
+    OPT_DEBUG,
+    OPT_LOG,
+    OPT_FD,
+    OPT_LAST
 };
 
-static struct opt {
-	int  ch;
-	const char *name;
-	const char *desc;
-	enum {NONE=0,MANDATORY,OPTIONAL} arg;
-	enum {INTEGER,STRING} arg_type;
-	const char *arg_val;
-	unsigned found;
-} opt_list[] = {
-	{'h',"help","this usage"},
-	{'u',"usage","this usage"},
-	{'v',"version","show version and exit"},
-	{'c',"country","default modem country name",MANDATORY,STRING,"USA"},
-	{ 0 ,"countrylist","show list of supported countries"},
-	{'g',"group","Modem TTY group",MANDATORY,STRING,"dialout"},
-	{'p',"perm","Modem TTY permission",MANDATORY,INTEGER,"0660"},
+static struct opt
+{
+    int ch;
+    const char* name;
+    const char* desc;
+    enum
+    {
+        NONE = 0,
+        MANDATORY,
+        OPTIONAL
+    } arg;
+    enum
+    {
+        INTEGER,
+        STRING
+    } arg_type;
+    const char* arg_val;
+    unsigned found;
+} opt_list[] = {{'h', "help", "this usage"},
+                {'u', "usage", "this usage"},
+                {'v', "version", "show version and exit"},
+                {'c', "country", "default modem country name", MANDATORY, STRING, "USA"},
+                {0, "countrylist", "show list of supported countries"},
+                {'g', "group", "Modem TTY group", MANDATORY, STRING, "dialout"},
+                {'p', "perm", "Modem TTY permission", MANDATORY, INTEGER, "0660"},
 #ifdef MODEM_CONFIG_RING_DETECTOR
-	{'r',"ringdetector","with internal ring detector (software)"},
+                {'r', "ringdetector", "with internal ring detector (software)"},
 #endif
-	{'n',"nortpriority","run with regular priority"},
-	{'s',"shortbuffer","use short buffer (4 periods length)"},
-	{'d',"debug","debug level (developers only, for ./sl...)",OPTIONAL,INTEGER,"0"},
-	{'l',"log","logging mode",OPTIONAL,INTEGER,"5"},
-	{'f',"fd","shared file descriptor number",MANDATORY,STRING,""},
-	{}
-};
+                {'n', "nortpriority", "run with regular priority"},
+                {'s', "shortbuffer", "use short buffer (4 periods length)"},
+                {'d', "debug", "debug level (developers only, for ./sl...)", OPTIONAL, INTEGER, "0"},
+                {'l', "log", "logging mode", OPTIONAL, INTEGER, "5"},
+                {'f', "fd", "shared file descriptor number", MANDATORY, STRING, ""},
+                {}};
 
-
-
-static void usage(const char *prog_name)
+static void usage(const char* prog_name)
 {
-	struct opt *opt;
-	PR_INFO("Usage: %s [option...]\n"
-		" 'option' may be:\n", prog_name);
-	for (opt = opt_list ; opt->name ; opt++ ) {
-		int n = 0;
-		if(opt->ch)
-			n = PR_INFO("  -%c, ",opt->ch);
-		else
-			n = PR_INFO("      ");
-		n += PR_INFO("--%s%s ",opt->name,opt->arg?"=VAL":"");
-		n += PR_INFO("%*s%s",24-n,"",opt->desc);
-		if(opt->arg) {
-			n+= PR_INFO(" (default `%s')",opt->arg_val);
-		}
-		PR_INFO("\n");
-	}
-	exit(1);
+    struct opt* opt;
+    PR_INFO(
+        "Usage: %s [option...]\n"
+        " 'option' may be:\n",
+        prog_name);
+    for (opt = opt_list; opt->name; opt++)
+    {
+        int n = 0;
+        if (opt->ch)
+            n = PR_INFO("  -%c, ", opt->ch);
+        else
+            n = PR_INFO("      ");
+        n += PR_INFO("--%s%s ", opt->name, opt->arg ? "=VAL" : "");
+        n += PR_INFO("%*s%s", 24 - n, "", opt->desc);
+        if (opt->arg)
+        {
+            n += PR_INFO(" (default `%s')", opt->arg_val);
+        }
+        PR_INFO("\n");
+    }
+    exit(1);
 }
 
-
-static void opt_parse(int argc, char *argv[])
+static void opt_parse(int argc, char* argv[])
 {
-	const char *prog_name;
-	const char *dev_name = NULL;
-	struct opt *opt;
-	char *p, *arg;
-	int found, i;
-	
-	prog_name = argv[0];
+    const char* prog_name;
+    const char* dev_name = NULL;
+    struct opt* opt;
+    char *p, *arg;
+    int found, i;
 
-	for( i = 1 ; i < argc ; i++ ) {
-		p = argv[i];
-		if(*p != '-') {
-			if(dev_name)
-				usage(prog_name);
-			dev_name = p;
-			continue;
-		}
-		found = 0;
-		arg = NULL;
-		do { p++; } while( *p == '-' );
-		for (opt = opt_list ; opt->name ; opt++ ) {
-			if(!strncmp(p,opt->name,strlen(opt->name)) ||
-			   (opt->ch && *p == opt->ch) ) {
-				char *q;
-				if(!strncmp(p,opt->name,strlen(opt->name)))
-					q = p + strlen(opt->name);
-				else
-					q = p + 1;
-				if( *q == '\0' )
-					found = 1;
-				else if (*q == '=' && opt->arg ) {
-					arg = q + 1;
-					found = 1;
-				}
-				else if(isdigit(*q) && opt->arg ) {
-					arg = q;
-					found = 1;
-				}
-			}
+    prog_name = argv[0];
 
-			if ( !found )
-				continue;
-			if ( arg && !opt->arg )
-				usage(prog_name);
+    for (i = 1; i < argc; i++)
+    {
+        p = argv[i];
+        if (*p != '-')
+        {
+            if (dev_name)
+                usage(prog_name);
+            dev_name = p;
+            continue;
+        }
+        found = 0;
+        arg = NULL;
+        do
+        {
+            p++;
+        } while (*p == '-');
+        for (opt = opt_list; opt->name; opt++)
+        {
+            if (!strncmp(p, opt->name, strlen(opt->name)) || (opt->ch && *p == opt->ch))
+            {
+                char* q;
+                if (!strncmp(p, opt->name, strlen(opt->name)))
+                    q = p + strlen(opt->name);
+                else
+                    q = p + 1;
+                if (*q == '\0')
+                    found = 1;
+                else if (*q == '=' && opt->arg)
+                {
+                    arg = q + 1;
+                    found = 1;
+                }
+                else if (isdigit(*q) && opt->arg)
+                {
+                    arg = q;
+                    found = 1;
+                }
+            }
 
-			if (!arg && opt->arg &&
-			    (i < argc - 1 && *argv[i+1] != '-') &&
-			    (!opt->arg_type == INTEGER || isdigit(*argv[i+1])))
-				arg = argv[++i];
+            if (!found)
+                continue;
+            if (arg && !opt->arg)
+                usage(prog_name);
 
-			if(!arg && opt->arg == MANDATORY)
-				usage(prog_name);
+            if (!arg && opt->arg && (i < argc - 1 && *argv[i + 1] != '-') && (!opt->arg_type == INTEGER || isdigit(*argv[i + 1])))
+                arg = argv[++i];
 
-			opt->found++;
-			if(opt->arg && arg) {
-				printf("arg: %s\n", arg);
-				opt->arg_val = arg;
-			}
-			break;
-		}
-		if(!found)
-			usage(prog_name);
-	}
+            if (!arg && opt->arg == MANDATORY)
+                usage(prog_name);
+
+            opt->found++;
+            if (opt->arg && arg)
+            {
+                printf("arg: %s\n", arg);
+                opt->arg_val = arg;
+            }
+            break;
+        }
+        if (!found)
+            usage(prog_name);
+    }
 }
 
-
-
-void modem_cmdline(int argc, char *argv[])
+void modem_cmdline(int argc, char* argv[])
 {
-	const char *prog_name = argv[0];
-	int val;
+    const char* prog_name = argv[0];
+    int val;
 
-	opt_parse(argc,argv);
+    opt_parse(argc, argv);
 
-	if(opt_list[OPT_HELP].found ||
-	   opt_list[OPT_USAGE].found )
-		usage(prog_name);
+    if (opt_list[OPT_HELP].found || opt_list[OPT_USAGE].found)
+        usage(prog_name);
 
-	if(opt_list[OPT_VERSION].found) {
-		extern void modem_print_version();
-		modem_print_version();
-		exit(0);
-	}
+    if (opt_list[OPT_VERSION].found)
+    {
+        extern void modem_print_version();
+        modem_print_version();
+        exit(0);
+    }
 
-	if(opt_list[OPT_COUNTRYLIST].found) {
-		const struct homolog_set *s ;
-		for( s = homolog_set; s->name ; s++ ) {
-			PR_INFO("%02x: %s\n",s->id,s->name);
-		}
-		exit(0);
-	}
-	if(opt_list[OPT_COUNTRY].found)
-		modem_default_country = opt_list[OPT_COUNTRY].arg_val;
-	if(opt_list[OPT_GROUP].found)
-		modem_group = opt_list[OPT_GROUP].arg_val;
-	if(opt_list[OPT_PERM].found) {
-		val = strtol(opt_list[OPT_PERM].arg_val,NULL,8);
-		if (val <= 0)
-			usage(prog_name);
-		modem_perm = val;
-	}
+    if (opt_list[OPT_COUNTRYLIST].found)
+    {
+        const struct homolog_set* s;
+        for (s = homolog_set; s->name; s++)
+        {
+            PR_INFO("%02x: %s\n", s->id, s->name);
+        }
+        exit(0);
+    }
+    if (opt_list[OPT_COUNTRY].found)
+        modem_default_country = opt_list[OPT_COUNTRY].arg_val;
+    if (opt_list[OPT_GROUP].found)
+        modem_group = opt_list[OPT_GROUP].arg_val;
+    if (opt_list[OPT_PERM].found)
+    {
+        val = strtol(opt_list[OPT_PERM].arg_val, NULL, 8);
+        if (val <= 0)
+            usage(prog_name);
+        modem_perm = val;
+    }
 #ifdef MODEM_CONFIG_RING_DETECTOR
-	if(opt_list[OPT_RINGDET].found)
-		ring_detector = 1;
+    if (opt_list[OPT_RINGDET].found)
+        ring_detector = 1;
 #endif
-	if(opt_list[OPT_USER].found)
-		need_realtime = 0;
-	if(opt_list[OPT_SHORTBUF].found)
-		use_short_buffer = 1;
-	if(opt_list[OPT_DEBUG].found) {
-		modem_debug_level = 1 ;
-		if(opt_list[OPT_DEBUG].arg_val &&
-		   (val= strtol(opt_list[OPT_DEBUG].arg_val,NULL,0)) > 0 )
-			modem_debug_level = val;
-	}
-	if(opt_list[OPT_FD].found) {
-		shared_fd = atoi(opt_list[OPT_FD].arg_val);
-	} else {
-		usage(prog_name);
-	}
-	if(opt_list[OPT_LOG].found) {
-		modem_debug_logging = 5;
-		if(opt_list[OPT_LOG].arg_val &&
-		   (val= strtol(opt_list[OPT_LOG].arg_val,NULL,0)) > 0 )
-			modem_debug_logging = val;
-	}
+    if (opt_list[OPT_USER].found)
+        need_realtime = 0;
+    if (opt_list[OPT_SHORTBUF].found)
+        use_short_buffer = 1;
+    if (opt_list[OPT_DEBUG].found)
+    {
+        modem_debug_level = 1;
+        if (opt_list[OPT_DEBUG].arg_val && (val = strtol(opt_list[OPT_DEBUG].arg_val, NULL, 0)) > 0)
+            modem_debug_level = val;
+    }
+    if (opt_list[OPT_FD].found)
+    {
+        shared_fd = atoi(opt_list[OPT_FD].arg_val);
+    }
+    else
+    {
+        usage(prog_name);
+    }
+    if (opt_list[OPT_LOG].found)
+    {
+        modem_debug_logging = 5;
+        if (opt_list[OPT_LOG].arg_val && (val = strtol(opt_list[OPT_LOG].arg_val, NULL, 0)) > 0)
+            modem_debug_logging = val;
+    }
 }
-

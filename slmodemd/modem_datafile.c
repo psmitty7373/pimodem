@@ -63,9 +63,7 @@ struct datafile_record {
 	unsigned size;
 };
 
-
-
-int datafile_load_info(char *file_name,struct dsp_info *info)
+int datafile_load_info(char *file_name, struct dsp_info *info)
 {
 	struct datafile_record *dr;
 	int ret = -1;
@@ -79,7 +77,7 @@ int datafile_load_info(char *file_name,struct dsp_info *info)
 		return -errno;
 	}
 
-        dr = (struct datafile_record *)malloc(sizeof(*dr));
+	dr = (struct datafile_record *)malloc(sizeof(*dr));
         if (!dr) {
 		close(fd);
 		return -errno;

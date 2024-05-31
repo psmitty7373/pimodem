@@ -218,7 +218,6 @@ static void opt_parse(int argc, char* argv[])
             opt->found++;
             if (opt->arg && arg)
             {
-                printf("arg: %s\n", arg);
                 opt->arg_val = arg;
             }
             break;

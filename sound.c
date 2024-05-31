@@ -7,42 +7,45 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <signal.h>
 
-#define BUFFER_SIZE 4096
-#define SAMPLE_FACTOR 10
-#define SAMPLE_RATE 9600
+#define BUFFER_SIZE     4096
+#define SAMPLE_RATE     9600
+#define PERIOD          48
+#define PERIOD_BUFFER   16
 
-void error_exit(const char *msg, int err) {
+void alsa_error(const char *msg, int err) {
     fprintf(stderr, "%s (%s)\n", msg, snd_strerror(err));
-    exit(EXIT_FAILURE);
 }
 
 int setup_mixer(snd_mixer_t **mixer, char *dev) {
     snd_mixer_selem_id_t *sid, *sidb;
     snd_mixer_elem_t *elem;
     long min, max;
-    int err;
+    int err = 0;
 
     if ((err = snd_mixer_open(mixer, 0)) < 0) {
-        error_exit("cannot open mixer", err);
+        alsa_error("cannot open mixer", err);
+        goto exit;
     }
 
     if ((err = snd_mixer_attach(*mixer, dev)) < 0) {
-        snd_mixer_close(*mixer);
-        error_exit("cannot attach to mixer", err);
+        alsa_error("cannot attach to mixer", err);
+        goto exit;
     }
 
     if ((err = snd_mixer_selem_register(*mixer, NULL, NULL)) < 0) {
-        snd_mixer_close(*mixer);
-        error_exit("cannot register mixer element", err);
+        alsa_error("cannot register mixer element", err);
+        goto exit;
     }
 
     if ((err = snd_mixer_load(*mixer)) < 0) {
-        snd_mixer_close(*mixer);
-        error_exit("cannot load mixer elements", err);
+        alsa_error("cannot load mixer elements", err);
+        goto exit;
     }
 
     for (elem = snd_mixer_first_elem(*mixer); elem; elem = snd_mixer_elem_next(elem)) {
@@ -54,15 +57,15 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
 
     elem = snd_mixer_find_selem(*mixer, sid);
     if (!elem) {
-        snd_mixer_close(*mixer);
-        error_exit("could not find mixer element: Speaker", 0);
+        printf("could not find mixer element: Speaker");
+        goto exit;
     }
 
     snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
 
     if ((err = snd_mixer_selem_set_playback_volume_all(elem, 45 * max / 100)) < 0) {
-        snd_mixer_close(*mixer);
-        error_exit("could not set volume", err);
+        alsa_error("could not set volume", err);
+        goto exit;
     }
 
     snd_mixer_selem_id_alloca(&sidb);
@@ -74,16 +77,17 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
     snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
 
     if (!elem) {
-        snd_mixer_close(*mixer);
-        error_exit("could not find mixer element: Mic", 0);
+        printf("could not find mixer element: Mic");
+        goto exit;
     }
 
     if (((err = snd_mixer_selem_set_playback_volume_all(elem, 1 * max / 100) < 0) < 0) || (err = snd_mixer_selem_set_capture_volume_all(elem, 1 * max / 100)) < 0) {
-        snd_mixer_close(*mixer);
-        error_exit("could not set volume", err);
+        alsa_error("could not set volume", err);
+        goto exit;
     }
 
-    return 0;
+    exit:
+    return err;
 }
 
 int setup_stream(snd_pcm_t **handle, char *dev, int stream_type) {
@@ -91,99 +95,115 @@ int setup_stream(snd_pcm_t **handle, char *dev, int stream_type) {
     snd_pcm_sw_params_t *sw_params;
     snd_pcm_format_t format;
     char buf[4096];
-    int err;
+    int err = 0;
 
     if ((err = snd_pcm_open(handle, dev, stream_type, SND_PCM_NONBLOCK)) < 0) {
-        error_exit("cannot open audio device", err);
+        alsa_error("cannot open audio device", err);
+        goto exit;
     }
 
     // HW
     if ((err = snd_pcm_hw_params_malloc(&hw_params)) < 0) {
-        error_exit("cannot allocate hardware parameter structure", err);
+        alsa_error("cannot allocate hardware parameter structure", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_hw_params_any(*handle, hw_params)) < 0) {
-        error_exit("cannot initialize hardware parameter structure", err);
+        alsa_error("cannot initialize hardware parameter structure", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_hw_params_set_access(*handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0) {
-        error_exit("cannot set access type", err);
+        alsa_error("cannot set access type", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_hw_params_set_format(*handle, hw_params, SND_PCM_FORMAT_S16_LE)) < 0) {
-        error_exit("cannot set sample format", err);
+        alsa_error("cannot set sample format", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_hw_params_set_channels(*handle, hw_params, 1)) < 0) {
-        error_exit("cannot set channel count", err);
+        alsa_error("cannot set channel count", err);
+        goto exit;
     }
 
     unsigned int rate = SAMPLE_RATE;
     unsigned int exact_rate = rate;
     if ((err = snd_pcm_hw_params_set_rate_near(*handle, hw_params, &exact_rate, 0)) < 0) {
-        error_exit("cannot set sample rate", err);
+        alsa_error("cannot set sample rate", err);
     }
 
     if (rate != exact_rate) {
         printf("Error! asked for rate %d, got %d\n", rate, exact_rate);
-        exit(EXIT_FAILURE);
+        err = 1;
+        goto exit;
     }
 
     snd_pcm_uframes_t min_period_size;
     int dir;
     if ((err = snd_pcm_hw_params_get_period_size_min(hw_params, &min_period_size, &dir)) < 0) {
-        error_exit("error getting minimum period size", err);
+        alsa_error("error getting minimum period size", err);
     }
 
     // Print the minimum period size
     printf("Minimum period size: %lu frames\n", min_period_size);
 
-    snd_pcm_uframes_t period = 48;
+    snd_pcm_uframes_t period = PERIOD;
     snd_pcm_uframes_t exact_period = period;
     if ((err = snd_pcm_hw_params_set_period_size_near(*handle, hw_params, &exact_period, NULL)) < 0) {
-        error_exit("cannot set sample rate", err);
+        alsa_error("cannot set sample rate", err);
+        goto exit;
     }
     printf("Asked for period %d, got %d\n", period, exact_period);
 
-    snd_pcm_uframes_t buffer_size = period * 32;
+    snd_pcm_uframes_t buffer_size = period * PERIOD_BUFFER;
     snd_pcm_uframes_t exact_buffer_size = buffer_size;
     if ((err = snd_pcm_hw_params_set_buffer_size_near(*handle, hw_params, &exact_buffer_size)) < 0) {
-        error_exit("cannot set sample rate", err);
+        alsa_error("cannot set sample rate", err);
+        goto exit;
     }
     printf("Asked for buffer size %d, got %d\n", buffer_size, exact_buffer_size);
 
     if ((err = snd_pcm_hw_params(*handle, hw_params)) < 0) {
-        error_exit("cannot set parameters", err);
+        alsa_error("cannot set parameters", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_prepare(*handle)) < 0) {
-        error_exit("cannot prepare audio interface", err);
+        alsa_error("cannot prepare audio interface", err);
+        goto exit;
     }
-
-    snd_pcm_hw_params_free(hw_params);
 
     // SW
     if ((err = snd_pcm_sw_params_malloc(&sw_params)) < 0) {
-        error_exit("cannot allocate hardware parameter structure", err);
+        alsa_error("cannot allocate hardware parameter structure", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_sw_params_current(*handle, sw_params)) < 0) {
-        error_exit("cannot initialize software parameter structure", err);
+        alsa_error("cannot initialize software parameter structure", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_sw_params_set_start_threshold(*handle, sw_params, INT_MAX)) < 0) {
-        error_exit("cannot set threshold", err);
+        alsa_error("cannot set threshold", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_sw_params_set_avail_min(*handle, sw_params, 4)) < 0) {
-        error_exit("cannot set avail min", err);
+        alsa_error("cannot set avail min", err);
+        goto exit;
     }
 
     if ((err = snd_pcm_sw_params(*handle, sw_params)) < 0) {
-        error_exit("cannot set software params", err);
+        alsa_error("cannot set software params", err);
     }
 
-    return 0;
+    exit:
+    snd_pcm_hw_params_free(hw_params);
+    snd_pcm_sw_params_free(sw_params);
+    return err;
 }
 
 int main(int argc, char *argv[]) {
@@ -191,14 +211,14 @@ int main(int argc, char *argv[]) {
 
     if (argc < 4) {
         printf("Usage: ./sound <mixer eg. hw:2> <alsa playback device (eg. plughw:2,0)> <alsa capture device>\n");
-        exit(EXIT_FAILURE);
+        return(EXIT_FAILURE);
     }
 
     int sv[2];  // Socket pair file descriptors
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1) {
         perror("socketpair");
-        exit(1);
+        return(EXIT_FAILURE);
     }
 
     if (fork() == 0) {
@@ -207,6 +227,17 @@ int main(int argc, char *argv[]) {
         close(sv[0]);
 
         snprintf(arg, sizeof(arg), "%d", sv[1]);
+
+        if (prctl(PR_SET_PDEATHSIG, SIGHUP) == -1) {
+            perror("prctl");
+            exit(EXIT_FAILURE);
+        }
+
+        // Verify that the parent is still alive
+        if (getppid() == 1) {
+            // Parent has already died, exit
+            exit(EXIT_FAILURE);
+        }
         /*
         ret = execl("/usr/bin/taskset", "taskset", "-c", "0",
             "/usr/bin/chrt", "1",
@@ -217,12 +248,10 @@ int main(int argc, char *argv[]) {
         ret = execl("/usr/bin/qemu-i386-static", "qemu-i386-static", "./slmodemd/slmodemd", "-n", "-d0", "-f", arg, NULL);
         if (ret == -1) {
             perror("execl");
-            exit(EXIT_FAILURE);
+            return(EXIT_FAILURE);
         }
     } else {
         // parent
-        //close(sv[1]);
-
     /*
         struct sched_param param;
         int max_priority, policy, ret;
@@ -248,20 +277,30 @@ int main(int argc, char *argv[]) {
 
     */
         int cap_count, play_count, err;
-        snd_mixer_t *mixer_handle;
-        snd_pcm_t *playback_handle;
-        snd_pcm_t *capture_handle;
+        snd_mixer_t *mixer_handle = NULL;
+        snd_pcm_t *playback_handle = NULL;
+        snd_pcm_t *capture_handle = NULL;
 
-        setup_mixer(&mixer_handle, argv[1]);
-        setup_stream(&playback_handle, argv[2], SND_PCM_STREAM_PLAYBACK);
-        setup_stream(&capture_handle, argv[3], SND_PCM_STREAM_CAPTURE);
+        if ((ret = setup_mixer(&mixer_handle, argv[1])) != 0) {
+            goto exit;
+        }
+        if ((ret = setup_stream(&playback_handle, argv[2], SND_PCM_STREAM_PLAYBACK)) != 0) {
+            goto exit;
+        }
+        if ((ret = setup_stream(&capture_handle, argv[3], SND_PCM_STREAM_CAPTURE)) != 0) {
+            goto exit;
+        }
 
         if ((cap_count = snd_pcm_poll_descriptors_count(capture_handle)) < 0) {
-            error_exit("cannot get descriptor count", cap_count);
+            alsa_error("cannot get descriptor count", cap_count);
+            ret = cap_count;
+            goto exit;
         }
 
         if ((play_count = snd_pcm_poll_descriptors_count(playback_handle)) < 0) {
-            error_exit("cannot get descriptor count", play_count);
+            alsa_error("cannot get descriptor count", play_count);
+            ret = play_count;
+            goto exit;
         }
 
         struct pollfd *fds;
@@ -274,11 +313,11 @@ int main(int argc, char *argv[]) {
         }
 
         if ((err = snd_pcm_poll_descriptors(capture_handle, fds, cap_count)) < 0) {
-            error_exit("cannot get poll descriptors", err);
+            alsa_error("cannot get poll descriptors", err);
         }
 
         if ((err = snd_pcm_poll_descriptors(playback_handle, fds + cap_count, play_count)) < 0) {
-            error_exit("cannot get poll descriptors", err);
+            alsa_error("cannot get poll descriptors", err);
         }
 
         fds[0].events = POLLIN;
@@ -300,14 +339,10 @@ int main(int argc, char *argv[]) {
         size_t bytes_pending = 0;
         unsigned short revents;
 
-        FILE *outf = fopen("/tmp/out.raw", "wb");
-        FILE *inf = fopen("/tmp/in.raw", "wb");
-
-static struct timeval prev_time = {0, 0};
-
         while (1) {
             if (poll(fds, cap_count + play_count + 1, -1) < 0) {
-                exit(EXIT_FAILURE);
+                perror("poll");
+                goto exit;
             }
 
             // alsa side
@@ -318,14 +353,13 @@ static struct timeval prev_time = {0, 0};
                     if (out.revents & POLLOUT) {
                         if (ioctl(sv[1], FIONREAD, &bytes_pending) == -1) {
                             perror("ioctl");
-                            return 1;
+                            goto exit;
                         }
                         if (bytes_pending < 96*12) {
                             int ret = write(sv[0], inbuf, inbuf_count * 2);
                             if (ret < inbuf_count * 2) {
                                 printf("write failure\n");
                             }
-                            fwrite(inbuf, sizeof(char), inbuf_count * 2, inf);
                         } else {
                         }
                     } else {
@@ -359,7 +393,6 @@ static struct timeval prev_time = {0, 0};
                         exit(EXIT_FAILURE);
                     }
                     else if (ret > 0) {
-                        fwrite(outbuf + outbuf_written, sizeof(char), ret * 2, outf);
                         outbuf_count -= ret;
                         outbuf_written += ret * 2;
                     }
@@ -382,12 +415,16 @@ static struct timeval prev_time = {0, 0};
         }
 
     exit:
-        fclose(outf);
-        fclose(inf);
-        snd_pcm_close(capture_handle);
-        snd_pcm_close(playback_handle);
-        snd_mixer_close(mixer_handle);
+        if (capture_handle != NULL) {
+            snd_pcm_close(capture_handle);
+        }
+        if (playback_handle != NULL) {
+            (playback_handle);
+        }
+        if (mixer_handle != NULL) {
+            snd_mixer_close(mixer_handle);
+        }
     }
 
-    return 0;
+    return ret;
 }

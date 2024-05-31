@@ -55,7 +55,7 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
     elem = snd_mixer_find_selem(*mixer, sid);
     if (!elem) {
         snd_mixer_close(*mixer);
-        error_exit("could not find mixer element", 0);
+        error_exit("could not find mixer element: Speaker", 0);
     }
 
     snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
@@ -75,7 +75,7 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
 
     if (!elem) {
         snd_mixer_close(*mixer);
-        error_exit("could not find mixer element", 0);
+        error_exit("could not find mixer element: Mic", 0);
     }
 
     if (((err = snd_mixer_selem_set_playback_volume_all(elem, 1 * max / 100) < 0) < 0) || (err = snd_mixer_selem_set_capture_volume_all(elem, 1 * max / 100)) < 0) {

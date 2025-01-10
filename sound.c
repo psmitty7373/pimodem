@@ -16,7 +16,7 @@
 #define BUFFER_SIZE     4096
 #define SAMPLE_RATE     9600
 #define PERIOD          48
-#define PERIOD_BUFFER   16
+#define PERIOD_BUFFER   32
 
 void alsa_error(const char *msg, int err) {
     fprintf(stderr, "%s (%s)\n", msg, snd_strerror(err));
@@ -63,7 +63,7 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
 
     snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
 
-    if ((err = snd_mixer_selem_set_playback_volume_all(elem, 45 * max / 100)) < 0) {
+    if ((err = snd_mixer_selem_set_playback_volume_all(elem, 15 * max / 100)) < 0) {
         alsa_error("could not set volume", err);
         goto exit;
     }
@@ -81,7 +81,7 @@ int setup_mixer(snd_mixer_t **mixer, char *dev) {
         goto exit;
     }
 
-    if (((err = snd_mixer_selem_set_playback_volume_all(elem, 1 * max / 100) < 0) < 0) || (err = snd_mixer_selem_set_capture_volume_all(elem, 1 * max / 100)) < 0) {
+    if (((err = snd_mixer_selem_set_playback_volume_all(elem, 20 * max / 100) < 0) < 0) || (err = snd_mixer_selem_set_capture_volume_all(elem, 50 * max / 100)) < 0) {
         alsa_error("could not set volume", err);
         goto exit;
     }
@@ -252,7 +252,7 @@ int main(int argc, char *argv[]) {
         }
     } else {
         // parent
-    /*
+
         struct sched_param param;
         int max_priority, policy, ret;
 
@@ -275,7 +275,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-    */
         int cap_count, play_count, err;
         snd_mixer_t *mixer_handle = NULL;
         snd_pcm_t *playback_handle = NULL;
@@ -339,6 +338,13 @@ int main(int argc, char *argv[]) {
         size_t bytes_pending = 0;
         unsigned short revents;
 
+        FILE *fout;
+        fout = fopen("/tmp/out.bin", "wb");
+        if (NULL == fout) {
+            printf("ERROR\n");
+            goto exit;
+        }
+
         while (1) {
             if (poll(fds, cap_count + play_count + 1, -1) < 0) {
                 perror("poll");
@@ -355,8 +361,10 @@ int main(int argc, char *argv[]) {
                             perror("ioctl");
                             goto exit;
                         }
-                        if (bytes_pending < 96*12) {
+                        if (bytes_pending < 96 * 12) {
                             int ret = write(sv[0], inbuf, inbuf_count * 2);
+                            fwrite(inbuf, sizeof(char), inbuf_count * 2, fout);
+                            fflush(fout);
                             if (ret < inbuf_count * 2) {
                                 printf("write failure\n");
                             }
@@ -381,12 +389,13 @@ int main(int argc, char *argv[]) {
                 while (1) {
                     ret = snd_pcm_writei(playback_handle, outbuf + outbuf_written, outbuf_count);
                     if (ret == -EAGAIN) {
-                        printf("EAGAIN\n");
+                        printf("EAGAIN WRITE\n");
                         break;
                     }
                     else if (ret == -EPIPE) {
                         //ret = alsa_xrun_recovery(dev);
                         printf("EPIPE WRITE\n");
+                        continue;
                     }
                     else if (ret < 0) {
                         printf("uh-oh!\n");
@@ -413,6 +422,8 @@ int main(int argc, char *argv[]) {
                 fds[2].events = 0;
             }
         }
+
+    fclose(fout);
 
     exit:
         if (capture_handle != NULL) {

@@ -437,13 +437,13 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 			in = inbuf;
 			if(m->update_delay < 0) {
 				if ( -m->update_delay >= count) {
-					DBG("change delay -%d...\n", count);
+					ERR("change delay -%d...\n", count);
 					dev->delay -= count;
 					m->update_delay += count;
 					continue;
 				}
 
-				DBG("change delay %d...\n", m->update_delay);
+				ERR("change delay %d...\n", m->update_delay);
 				in -= m->update_delay*2;
 				count += m->update_delay;
 				dev->delay += m->update_delay;
